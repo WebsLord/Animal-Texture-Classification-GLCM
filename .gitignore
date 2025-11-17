@@ -1,0 +1,14 @@
+# Python Virtual Environment
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Mac/Windows Operating System Files
+.DS_Store
+Thumbs.db
+
+# Output Files (We'll create them later)
+# *.arff
+# (We'll also commit the arff file for now, and we'll add it here later if necessary)
