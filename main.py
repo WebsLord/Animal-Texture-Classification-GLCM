@@ -3,35 +3,35 @@ import glob
 import time
 import cv2
 import numpy as np
+import pywt # Wavelet Library / Dalgacık Kütüphanesi
 from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 
 # ----------------- PROJECT SETTINGS / PROJE AYARLARI -----------------
 
-# Directory settings
-# Dizin ayarları
 DATASET_DIR = "DATASET" 
 CLASS_FOLDERS = ["cats", "dogs", "snakes"]
 IMAGE_EXTENSIONS = ["*.jpg", "*.jpeg", "*.png"]
 
-# Output ARFF file for Step 2 (includes LCP)
-# Adım 2 için çıktı ARFF dosyası (LCP içerir)
-OUTPUT_ARFF_FILE = "features_step2_lcp.arff" 
+# Output ARFF file for Step 3 (includes Wavelet)
+# Adım 3 için çıktı ARFF dosyası (Wavelet içerir)
+OUTPUT_ARFF_FILE = "features_step3_wavelet.arff" 
 
-# --- GLCM CONFIGURATION / GLCM YAPILANDIRMASI ---
-# Final project requires averaging features from directions 0, 45, 90, 135
-# Final projesi 0, 45, 90, 135 yönlerinden gelen özelliklerin ortalamasını gerektirir
+# --- GLCM CONFIGURATION ---
 ANGLES_RAD = [0, np.pi/4, np.pi/2, 3*np.pi/4]
 GLCM_PROPERTIES = ['contrast', 'dissimilarity', 'homogeneity', 'energy', 'correlation', 'ASM']
 
-# --- LBP CONFIGURATION / LBP YAPILANDIRMASI ---
+# --- LBP CONFIGURATION ---
 LBP_POINTS = 24 
 LBP_RADIUS = 3 
 LBP_METHOD = 'uniform'
 
-# --- LCP CONFIGURATION / LCP YAPILANDIRMASI ---
-# Number of bins for Local Contrast histogram
-# Yerel Kontrast histogramı için kutu sayısı
+# --- LCP CONFIGURATION ---
 LCP_BINS = 32
+
+# --- WAVELET CONFIGURATION / WAVELET YAPILANDIRMASI ---
+# Wavelet family to use (Haar is simple and effective for textures)
+# Kullanılacak dalgacık ailesi (Haar, dokular için basit ve etkilidir)
+WAVELET_FAMILY = 'db1' 
 
 # ---------------------------------------------------------------------
 
@@ -70,10 +70,7 @@ def find_image_paths(base_dir):
     return all_image_paths
 
 def extract_color_features(img_bgr):
-    """
-    Calculates the mean of Blue, Green, and Red channels.
-    Mavi, Yeşil ve Kırmızı kanalların ortalamasını hesaplar.
-    """
+    """ Calculates Mean Blue, Green, Red. """
     try:
         means = cv2.mean(img_bgr)[:3]
         return list(means)
@@ -82,10 +79,7 @@ def extract_color_features(img_bgr):
         return None
 
 def extract_glcm_features_averaged(img_gray):
-    """
-    Computes GLCM features and averages them across all 4 directions.
-    GLCM özelliklerini hesaplar ve 4 yönün ortalamasını alır.
-    """
+    """ Computes GLCM features and averages them across 4 directions. """
     try:
         glcm = graycomatrix(img_gray, distances=[1], angles=ANGLES_RAD, levels=256,
                             symmetric=True, normed=True)
@@ -99,10 +93,7 @@ def extract_glcm_features_averaged(img_gray):
         return None
 
 def extract_lbp_features(img_gray):
-    """
-    Computes Local Binary Pattern (LBP) histogram.
-    Yerel İkili Desen (LBP) histogramını hesaplar.
-    """
+    """ Computes Local Binary Pattern (LBP) histogram. """
     try:
         lbp = local_binary_pattern(img_gray, LBP_POINTS, LBP_RADIUS, LBP_METHOD)
         n_bins = int(lbp.max() + 1)
@@ -113,126 +104,130 @@ def extract_lbp_features(img_gray):
         return None
 
 def extract_lcp_features(img_gray):
-    """
-    Computes Local Contrast Pattern (LCP) features using a custom implementation.
-    Calculates the magnitude of difference between center pixel and neighbors.
-    
-    Özel bir uygulama kullanarak Yerel Kontrast Deseni (LCP) özelliklerini hesaplar.
-    Merkez piksel ve komşular arasındaki farkın büyüklüğünü hesaplar.
-    """
+    """ Computes Local Contrast Pattern (LCP) histogram. """
     try:
-        # Create an empty image for LCP output
-        # LCP çıktısı için boş bir görüntü oluştur
         rows, cols = img_gray.shape
         lcp_image = np.zeros((rows, cols), dtype=np.float32)
-        
-        # Convert to float to avoid overflow/underflow during subtraction
-        # Çıkarma sırasında taşmayı önlemek için float'a dönüştür
         img_float = img_gray.astype(np.float32)
 
-        # Define 8 neighbors relative positions (3x3 window)
-        # 8 komşu göreli konumunu tanımla (3x3 pencere)
-        # (dy, dx)
-        neighbors = [(-1, -1), (-1, 0), (-1, 1),
-                     (0, -1),           (0, 1),
-                     (1, -1),  (1, 0),  (1, 1)]
+        # 8-neighbor offsets
+        neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1),  (1, 0),  (1, 1)]
 
-        # Calculate Local Contrast: Sum of absolute differences with neighbors
-        # Yerel Kontrastı Hesapla: Komşularla mutlak farkların toplamı
         for dy, dx in neighbors:
-            # Shift image to align neighbor with center using np.roll (faster than loops)
-            # np.roll kullanarak komşuyu merkezle hizalamak için görüntüyü kaydır (döngülerden daha hızlı)
             shifted = np.roll(img_float, shift=(-dy, -dx), axis=(0, 1))
+            lcp_image += np.abs(img_float - shifted)
             
-            # Calculate absolute difference
-            # Mutlak farkı hesapla
-            diff = np.abs(img_float - shifted)
-            lcp_image += diff
-            
-        # Normalize LCP image to 0-255 range for histogram calculation
-        # Histogram hesaplaması için LCP görüntüsünü 0-255 aralığına normalleştir
         lcp_norm = cv2.normalize(lcp_image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        
-        # Calculate Histogram of LCP (Texture Contrast Distribution)
-        # LCP Histogramını Hesapla (Doku Kontrast Dağılımı)
         hist, _ = np.histogram(lcp_norm.ravel(), bins=LCP_BINS, range=(0, 256), density=True)
         
         return list(hist)
-
     except Exception as e:
         print(f"[ERROR] LCP extraction error: {e}")
         return None
 
-def process_image(image_path):
+def extract_wavelet_features(img_gray):
     """
-    Main processing function for a single image. Coordinates all feature extractors.
-    Tek bir resim için ana işleme fonksiyonu. Tüm özellik çıkarıcıları koordine eder.
+    Performs 2D Discrete Wavelet Transform (DWT) and extracts statistics from sub-bands.
+    2B Ayrık Dalgacık Dönüşümü (DWT) gerçekleştirir ve alt bantlardan istatistikleri çıkarır.
     """
-    img_bgr = cv2.imread(image_path)
-    if img_bgr is None:
+    try:
+        # Perform DWT
+        # DWT Gerçekleştir
+        # coefficients: (cA, (cH, cV, cD))
+        # cA: Approximation (Yaklaşım), cH: Horizontal (Yatay), cV: Vertical (Dikey), cD: Diagonal (Çapraz)
+        coeffs = pywt.dwt2(img_gray, WAVELET_FAMILY)
+        cA, (cH, cV, cD) = coeffs
+        
+        features = []
+        
+        # Extract Mean and Energy from each sub-band (4 bands * 2 features = 8 features)
+        # Her alt banttan Ortalama ve Enerji çıkar (4 bant * 2 özellik = 8 özellik)
+        sub_bands = {'LL': cA, 'LH': cH, 'HL': cV, 'HH': cD}
+        
+        for name, band in sub_bands.items():
+            # Mean
+            # Ortalama
+            mean_val = np.mean(band)
+            
+            # Energy (Mean of squared magnitude)
+            # Enerji (Karesel büyüklüğün ortalaması)
+            energy_val = np.mean(np.square(band))
+            
+            features.extend([mean_val, energy_val])
+            
+        return features
+    except Exception as e:
+        print(f"[ERROR] Wavelet extraction error: {e}")
         return None
+
+def process_image(image_path):
+    """ Main processing function. Coordinates all feature extractors. """
+    img_bgr = cv2.imread(image_path)
+    if img_bgr is None: return None
 
     img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-    # --- FEATURE EXTRACTION PIPELINE / ÖZNİTELİK ÇIKARMA HATTI ---
+    # --- FEATURE EXTRACTION PIPELINE ---
     
-    # 1. Color (3 features) - Basic
+    # 1. Color (3)
     f_color = extract_color_features(img_bgr)
     
-    # 2. GLCM (6 features) - Averaged Directions
+    # 2. GLCM (6)
     f_glcm = extract_glcm_features_averaged(img_gray)
     
-    # 3. LBP (Histogram features) - Texture Pattern
+    # 3. LBP (Histogram)
     f_lbp = extract_lbp_features(img_gray)
     
-    # 4. LCP (Histogram features) - Texture Contrast (BONUS)
+    # 4. LCP (Histogram)
     f_lcp = extract_lcp_features(img_gray)
+    
+    # 5. Wavelet (8 features) - NEW
+    f_wavelet = extract_wavelet_features(img_gray)
 
-    # Combine all features into a single vector
-    # Tüm özellikleri tek bir vektörde birleştir
-    if f_color and f_glcm and f_lbp and f_lcp:
-        return f_color + f_glcm + f_lbp + f_lcp
+    # Combine
+    if f_color and f_glcm and f_lbp and f_lcp and f_wavelet:
+        return f_color + f_glcm + f_lbp + f_lcp + f_wavelet
     
     return None
 
 def write_arff(filename, data, class_labels, lbp_len, lcp_len):
-    """
-    Writes extracted data to Weka ARFF format.
-    Çıkarılan veriyi Weka ARFF formatına yazar.
-    """
+    """ Writes data to Weka ARFF format. """
     print(f"\n[INFO] Writing output to '{filename}'...")
     
     header = []
-    header.append(f"@RELATION animal_classification_step2_lcp")
+    header.append(f"@RELATION animal_classification_step3_wavelet")
     header.append("")
 
-    # -- Attribute Definitions / Nitelik Tanımları --
-    
-    # Color Attributes
+    # Color
     header.append("@ATTRIBUTE Color_Mean_Blue NUMERIC")
     header.append("@ATTRIBUTE Color_Mean_Green NUMERIC")
     header.append("@ATTRIBUTE Color_Mean_Red NUMERIC")
     
-    # GLCM Attributes
+    # GLCM
     for prop in GLCM_PROPERTIES:
         header.append(f"@ATTRIBUTE GLCM_Avg_{prop} NUMERIC")
         
-    # LBP Attributes
+    # LBP
     for i in range(lbp_len):
         header.append(f"@ATTRIBUTE LBP_Hist_{i} NUMERIC")
 
-    # LCP Attributes (New)
+    # LCP
     for i in range(lcp_len):
         header.append(f"@ATTRIBUTE LCP_Hist_{i} NUMERIC")
+        
+    # Wavelet (8 Attributes)
+    bands = ['LL', 'LH', 'HL', 'HH']
+    metrics = ['Mean', 'Energy']
+    for band in bands:
+        for metric in metrics:
+            header.append(f"@ATTRIBUTE Wavelet_{band}_{metric} NUMERIC")
 
-    # Class Attribute
+    # Class
     class_str = "{" + ",".join(class_labels) + "}"
     header.append(f"@ATTRIBUTE class {class_str}")
     header.append("")
     header.append("@DATA")
     
-    # Write Data Rows
-    # Veri Satırlarını Yaz
     data_lines = []
     for features, label in data:
         feat_str = ",".join(map(str, features))
@@ -247,7 +242,7 @@ def write_arff(filename, data, class_labels, lbp_len, lcp_len):
     except Exception as e:
         print(f"[ERROR] Could not write ARFF file: {e}")
 
-# --- MAIN EXECUTION / ANA YÜRÜTME ---
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
     
     images = find_image_paths(DATASET_DIR)
@@ -256,7 +251,7 @@ if __name__ == "__main__":
     if images:
         print("----------------------------------------------------")
         print(f"[INFO] Processing {len(images)} images...")
-        print(f"[INFO] Features: Color + GLCM (Avg) + LBP + LCP (Bonus)")
+        print(f"[INFO] Features: Color + GLCM + LBP + LCP + Wavelet (New)")
         print("----------------------------------------------------")
         
         start_time = time.time()
@@ -275,18 +270,15 @@ if __name__ == "__main__":
         print(f"[INFO] Processing finished in {elapsed:.2f} seconds.")
         
         if processed_data:
-            # Dynamic calculation of attribute lengths
-            # Nitelik uzunluklarının dinamik hesaplanması
             total_len = len(processed_data[0][0])
-            
-            # Known fixed lengths: Color(3) + GLCM(6) = 9
-            # LCP length is fixed by LCP_BINS = 32
-            # Remaining is LBP
+            # Color(3) + GLCM(6) + Wavelet(8) = 17 fixed
+            # LCP = 32
             lcp_len = LCP_BINS
-            lbp_len = total_len - 3 - 6 - lcp_len
+            fixed_len = 3 + 6 + 8
+            lbp_len = total_len - fixed_len - lcp_len
             
             write_arff(OUTPUT_ARFF_FILE, processed_data, CLASS_FOLDERS, lbp_len, lcp_len)
         else:
             print("[ERROR] No features extracted.")
     else:
-        print("[ERROR] No images found. Check DATASET directory.")
+        print("[ERROR] No images found.")
