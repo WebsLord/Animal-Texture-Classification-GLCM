@@ -194,8 +194,6 @@ def process_image(image_path):
     f_lbp = extract_lbp_features(img_gray)
     f_lcp = extract_lcp_features(img_gray)
     f_wavelet = extract_wavelet_features(img_gray)
-    
-    # 6. Hermite Transform (6 features) - NEW
     f_hermite = extract_hermite_features(img_gray)
 
     if f_color and f_glcm and f_lbp and f_lcp and f_wavelet and f_hermite:
@@ -254,6 +252,11 @@ if __name__ == "__main__":
             features = process_image(path)
             if features: processed_data.append((features, label))
         
+        end_time = time.time()  # Eksik olan kısım eklendi
+        elapsed = end_time - start_time # Eksik olan kısım eklendi
+        print("----------------------------------------------------")
+        print(f"[INFO] Processing finished in {elapsed:.2f} seconds.") # Eksik olan kısım eklendi
+
         if processed_data:
             total_len = len(processed_data[0][0])
             # Fixed: Color(3)+GLCM(6)+Wavelet(8)+Hermite(6) = 23
