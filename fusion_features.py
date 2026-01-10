@@ -1,127 +1,166 @@
 import os
 import pandas as pd
+import sys
+import time
 
-# Birleştirilecek dosyaların listesi (Senin dosya isimlerinle birebir aynı)
-# NOT: Bu dosyaların bu script ile aynı klasörde olduğundan emin ol.
+# ----------------- FUSION SETTINGS / BİRLEŞTİRME AYARLARI -----------------
+
+# Birleştirilecek dosyalar ve ön ekleri (Prefix)
 FILES = [
-    {"name": "features_step1_glcm_lbp.arff", "prefix": "S1_GLCM_LBP"},
-    {"name": "features_step2_lcp.arff", "prefix": "S2_LCP"},
-    {"name": "features_step3_wavelet.arff", "prefix": "S3_Wavelet"},
-    {"name": "features_step4_hermite.arff", "prefix": "S4_Hermite"},
-    {"name": "features_step5(final)_Fourier.arff", "prefix": "S5_Fourier"}
+    {"name": "features_step1_glcm_lbp.arff", "prefix": "S1"},
+    {"name": "features_step2_lcp.arff", "prefix": "S2"},
+    {"name": "features_step3_wavelet.arff", "prefix": "S3"},
+    {"name": "features_step4_hermite.arff", "prefix": "S4"},
+    {"name": "features_step5(final)_Fourier.arff", "prefix": "S5"}
 ]
 
 OUTPUT_FILE = "final_fusion_model.arff"
 
+# -------------------------------------------------------------------------
+
 def load_arff_data(file_path):
     """
-    ARFF dosyasının sadece veri (@data sonrası) kısmını okur.
-    Header kısmını manuel parse eder.
+    ARFF dosyasını okur, @data kısmını DataFrame'e çevirir.
+    Attribute isimlerini parse eder.
     """
     data_lines = []
     attributes = []
     data_started = False
     
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            
+            # Attribute isimlerini al
+            if line.lower().startswith("@attribute"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    attr_name = parts[1].strip()
+                    attributes.append(attr_name)
+            
+            # Data başlangıcını yakala
+            if line.lower().startswith("@data"):
+                data_started = True
+                continue
+            
+            # Veriyi al (yorum satırlarını atla)
+            if data_started and not line.startswith("%"):
+                # Satırdaki verileri virgülle ayır ve temizle
+                row_data = [x.strip().replace("'", "").replace('"', "") for x in line.split(',')]
+                data_lines.append(row_data)
+                
+        df = pd.DataFrame(data_lines, columns=attributes)
+        return df
         
-    for line in lines:
-        line = line.strip()
-        if not line: continue
-        
-        # Attribute isimlerini yakala
-        if line.lower().startswith("@attribute"):
-            parts = line.split()
-            attr_name = parts[1]
-            attributes.append(attr_name)
-            
-        # Data başlangıcını bul
-        if line.lower().startswith("@data"):
-            data_started = True
-            continue
-            
-        # Veriyi al
-        if data_started and not line.startswith("%"):
-            data_lines.append(line.split(','))
-            
-    # DataFrame oluştur
-    df = pd.DataFrame(data_lines, columns=attributes)
-    return df
+    except Exception as e:
+        print(f"[ERROR] Dosya okunurken hata oluştu: {file_path}")
+        print(f"[ERROR] Detay: {e}")
+        sys.exit(1)
 
 def main():
-    print("🚀 Fusion işlemi başlıyor...")
-    combined_df = pd.DataFrame()
-    final_label_col = None
+    start_time = time.time()
+    
+    print("----------------------------------------------------")
+    print("[INFO] DIGITAL IMAGE PROCESSING: FEATURE FUSION SYSTEM")
+    print(f"[INFO] Target Output: {OUTPUT_FILE}")
+    print("----------------------------------------------------")
 
+    combined_df = pd.DataFrame()
+    final_labels = []
+    total_files = len(FILES)
+
+    # --- ADIM 1: DOSYALARI OKUMA VE BİRLEŞTİRME ---
+    print(f"[INFO] Starting fusion process for {total_files} modules...")
+    
     for i, file_info in enumerate(FILES):
-        path = file_info["name"]
+        file_name = file_info["name"]
         prefix = file_info["prefix"]
         
-        if not os.path.exists(path):
-            print(f"❌ HATA: {path} dosyası bulunamadı! Lütfen dosya ismini kontrol et.")
+        if not os.path.exists(file_name):
+            print(f"[ERROR] File not found: {file_name}")
+            print("[HINT] Run previous steps to generate feature files.")
             return
 
-        print(f"📂 Okunuyor: {path}...")
-        df = load_arff_data(path)
+        print(f"[PROGRESS] Processing {i+1}/{total_files}: {file_name}...")
         
-        # Sütun isimlerini temizle (boşluk veya tırnak varsa)
-        df.columns = [c.strip().replace("'", "").replace('"', "") for c in df.columns]
+        # Veriyi yükle
+        df = load_arff_data(file_name)
         
-        # Son sütun (label/class) hariç diğerlerine prefix ekle
-        # Label sütununu (genelde son sütundur) bulalım
-        label_col_name = df.columns[-1] 
+        # Label sütununu bul (Genelde 'class' veya en son sütun)
+        label_col = df.columns[-1]
         
-        # Eğer bu ilk dosya değilse, label sütununu düşür (tekrar etmesin)
-        if i > 0:
-            df = df.drop(columns=[label_col_name])
-        else:
-            # İlk dosyanın label ismini sakla
-            final_label_col = label_col_name
-
-        # Özellik isimlerini benzersiz yap (örn: contrast -> S1_GLCM_LBP_contrast)
-        new_columns = []
-        for col in df.columns:
-            if col == label_col_name and i == 0:
-                new_columns.append(col) # Label ismini değiştirme
-            else:
-                new_columns.append(f"{prefix}_{col}")
+        # İlk dosya ise etiketleri sakla
+        if i == 0:
+            final_labels = df[label_col].values
+            print(f"   -> Class Labels Detected: {len(final_labels)} instances.")
         
-        df.columns = new_columns
+        # Özellikleri ayır (Label hariç)
+        features_df = df.drop(columns=[label_col])
         
-        # Dataframe'leri yan yana (axis=1) birleştir
+        # Sütun isimlerine Prefix ekle (Çakışmayı önlemek için: S1_contrast, S2_hist...)
+        features_df.columns = [f"{prefix}_{col}" for col in features_df.columns]
+        
+        # Ana tabloya ekle
         if combined_df.empty:
-            combined_df = df
+            combined_df = features_df
         else:
-            # Satır sayıları eşit mi kontrol et
-            if len(df) != len(combined_df):
-                print(f"⚠️ UYARI: Satır sayıları uyuşmuyor! ({len(combined_df)} vs {len(df)})")
+            if len(features_df) != len(combined_df):
+                print(f"[ERROR] Row mismatch! {file_name} has {len(features_df)} rows, expected {len(combined_df)}.")
+                return
+            combined_df = pd.concat([combined_df, features_df], axis=1)
             
-            combined_df = pd.concat([combined_df, df], axis=1)
+        print(f"   -> Merged: {len(features_df.columns)} new features added.")
 
-    print(f"✅ Tüm dosyalar birleştirildi. Toplam Özellik Sayısı: {len(combined_df.columns) - 1}")
+    # --- ADIM 2: DATA MATRIX HAZIRLIĞI ---
+    print("----------------------------------------------------")
+    print("[INFO] Finalizing Data Matrix...")
     
-    # --- ARFF OLARAK KAYDETME ---
-    print(f"💾 {OUTPUT_FILE} kaydediliyor...")
+    # Label sütununu en sona ekle
+    combined_df['class'] = final_labels
+
+    # Sınıf isimlerini benzersiz olarak bul (J48 için gerekli)
+    unique_classes = sorted(list(set(final_labels)))
+    class_str = ",".join(unique_classes)
     
-    with open(OUTPUT_FILE, 'w') as f:
-        f.write(f"@relation fusion_all_features\n\n")
+    print(f"[INFO] Classes: {{ {class_str} }}")
+    print(f"[INFO] Total Features: {len(combined_df.columns) - 1}")
+    print(f"[INFO] Total Instances: {len(combined_df)}")
+
+    # --- MATRIX PREVIEW (GÖRSELLİK İÇİN) ---
+    print("\n[INFO] --- FUSED DATA MATRIX PREVIEW (First 5 Rows) ---")
+    # Pandas ayarları: Sütunları kesmesin, geniş göstersin
+    pd.set_option('display.max_columns', 10) 
+    pd.set_option('display.width', 1000)
+    print(combined_df.head())
+    print("----------------------------------------------------\n")
+
+    # --- ADIM 3: ARFF DOSYASINI YAZMA ---
+    print(f"[INFO] Writing output to '{OUTPUT_FILE}'...")
+    
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(f"@relation 'Fusion_Model_All_Steps_Combined'\n\n")
         
-        # Attribute satırlarını yaz
+        # Numeric özellikleri yaz
         for col in combined_df.columns:
-            if col == final_label_col:
-                # Sınıf etiketi için (cats,dogs,snakes)
-                f.write(f"@attribute {col} {{cats,dogs,snakes}}\n")
-            else:
-                # Diğer tüm özellikler numeric
+            if col != 'class':
                 f.write(f"@attribute {col} numeric\n")
-                
-        f.write("\n@data\n")
         
-        # Veriyi yaz
-        for index, row in combined_df.iterrows():
-            f.write(",".join(map(str, row.values)) + "\n")
+        # Class attribute'unu NOMINAL formatta yaz (J48 fix)
+        f.write(f"@attribute class {{{class_str}}}\n\n")
+        
+        f.write("@data\n")
+        
+        # Pandas CSV olarak yaz (Hata veren kısım düzeltildi: line_terminator -> lineterminator)
+        combined_df.to_csv(f, header=False, index=False, lineterminator='\n')
 
-    print("🎉 İŞLEM TAMAMLANDI! Weka'da açmaya hazır.")
+    elapsed = time.time() - start_time
+    print(f"[SUCCESS] Fusion completed successfully in {elapsed:.2f} seconds.")
+    print(f"[SUCCESS] File saved: {os.path.abspath(OUTPUT_FILE)}")
+    print("[HINT] Now open Weka -> Preprocess -> Open File -> Filter:Normalize -> Classify:J48")
 
 if __name__ == "__main__":
     main()
